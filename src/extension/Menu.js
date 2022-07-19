@@ -6,21 +6,23 @@
 //                                                                                      //
 //////////////////////////////////////////////////////////////////////////////////////////
 
-'use strict';
+"use strict";
 
-const Main                            = imports.ui.main;
-const {Clutter, Gdk, Gtk, GLib, Meta} = imports.gi;
+const Main = imports.ui.main;
+const { Clutter, Gdk, Gtk, GLib, Meta } = imports.gi;
 
-const Me               = imports.misc.extensionUtils.getCurrentExtension();
-const utils            = Me.imports.src.common.utils;
-const DBusInterface    = Me.imports.src.common.DBusInterface.DBusInterface;
-const InputManipulator = Me.imports.src.common.InputManipulator.InputManipulator;
-const Statistics       = Me.imports.src.common.Statistics.Statistics;
-const Timer            = Me.imports.src.common.Timer.Timer;
-const Background       = Me.imports.src.extension.Background.Background;
-const MenuItem         = Me.imports.src.extension.MenuItem.MenuItem;
-const SelectionWedges  = Me.imports.src.extension.SelectionWedges.SelectionWedges;
-const MenuItemState    = Me.imports.src.extension.MenuItem.MenuItemState;
+const Me = imports.misc.extensionUtils.getCurrentExtension();
+const utils = Me.imports.src.common.utils;
+const DBusInterface = Me.imports.src.common.DBusInterface.DBusInterface;
+const InputManipulator =
+  Me.imports.src.common.InputManipulator.InputManipulator;
+const Statistics = Me.imports.src.common.Statistics.Statistics;
+const Timer = Me.imports.src.common.Timer.Timer;
+const Background = Me.imports.src.extension.Background.Background;
+const MenuItem = Me.imports.src.extension.MenuItem.MenuItem;
+const SelectionWedges =
+  Me.imports.src.extension.SelectionWedges.SelectionWedges;
+const MenuItemState = Me.imports.src.extension.MenuItem.MenuItemState;
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // The Menu parses the JSON structure given to the ShowMenu method. It creates          //
@@ -30,15 +32,18 @@ const MenuItemState    = Me.imports.src.extension.MenuItem.MenuItemState;
 //////////////////////////////////////////////////////////////////////////////////////////
 
 var Menu = class Menu {
-
   // ------------------------------------------------------------ constructor / destructor
 
   // The Menu is only instantiated once by the Daemon. It is re-used for each new incoming
   // ShowMenu request. The four parameters are callbacks which are fired when the
   // corresponding event occurs.
   constructor(
-      settings, emitHoverSignal, emitUnhoverSignal, emitSelectSignal, emitCancelSignal) {
-
+    settings,
+    emitHoverSignal,
+    emitUnhoverSignal,
+    emitSelectSignal,
+    emitCancelSignal
+  ) {
     // Create Gio.Settings object for org.gnome.shell.extensions.flypie.
     this._settings = settings;
 
@@ -46,10 +51,10 @@ var Menu = class Menu {
     this._timer = new Timer();
 
     // Store the callbacks.
-    this._emitHoverSignal   = emitHoverSignal;
+    this._emitHoverSignal = emitHoverSignal;
     this._emitUnhoverSignal = emitUnhoverSignal;
-    this._emitSelectSignal  = emitSelectSignal;
-    this._emitCancelSignal  = emitCancelSignal;
+    this._emitSelectSignal = emitSelectSignal;
+    this._emitCancelSignal = emitCancelSignal;
 
     // This holds the ID of the currently active menu. It's null if no menu is currently
     // shown.
@@ -76,6 +81,14 @@ var Menu = class Menu {
     // global.get_pointer(). However, it is not limited to the mouse pointer position but
     // works for as well for stylus or touch input.
     this._pointerPos = [0, 0];
+
+    // Coordinates for tablets are only available during updates or if the mouse cursor is
+    // on the same screen, so we store the last known coordinate in a separate variable.
+    this._tabletPos = [0, 0];
+
+    // currentMonitor always reports the monitor the mouse cursor is on, so for tablets
+    // on multi-monitor setups, we need to keep track of the monitor ourself.
+    this._activeMon = Main.layoutManager.currentMonitor;
 
     // This will contain the Clutter.InputDevice which controls an extra cursor (such as a
     // stylus) if it was used most recently by the user. We will try to open the menu at
@@ -105,29 +118,34 @@ var Menu = class Menu {
     // Here we store the Clutter.InputDevice which controls an extra cursor if it was used
     // most recently by the user. We will try to open the menu at the current position of
     // this device later.
-    this._deviceChangedID =
-        Meta.get_backend().connect('last-device-changed', (b, device) => {
-          // Multi-cursor stuff only works on Wayland. For now, I assume that tablets,
-          // pens and erasers create a secondary cursor. Is this true?
-          if (utils.getSessionType() == 'wayland') {
-            if (device.get_device_type() == Clutter.InputDeviceType.TABLET_DEVICE ||
-                device.get_device_type() == Clutter.InputDeviceType.PEN_DEVICE ||
-                device.get_device_type() == Clutter.InputDeviceType.ERASER_DEVICE) {
-
-              this._lastNonPointerDevice = device;
-
-            }
-            // For all other pointer-input devices, we use the main mouse pointer
-            // location.
-            else if (
-                device.get_device_type() == Clutter.InputDeviceType.POINTER_DEVICE ||
-                device.get_device_type() == Clutter.InputDeviceType.TOUCHPAD_DEVICE ||
-                device.get_device_type() == Clutter.InputDeviceType.TOUCHSCREEN_DEVICE) {
-
-              this._lastNonPointerDevice = null;
-            }
+    this._deviceChangedID = Meta.get_backend().connect(
+      "last-device-changed",
+      (b, device) => {
+        // Multi-cursor stuff only works on Wayland. For now, I assume that tablets,
+        // pens and erasers create a secondary cursor. Is this true?
+        if (utils.getSessionType() == "wayland") {
+          if (
+            device.get_device_type() == Clutter.InputDeviceType.TABLET_DEVICE ||
+            device.get_device_type() == Clutter.InputDeviceType.PEN_DEVICE ||
+            device.get_device_type() == Clutter.InputDeviceType.ERASER_DEVICE
+          ) {
+            this._lastNonPointerDevice = device;
           }
-        });
+          // For all other pointer-input devices, we use the main mouse pointer
+          // location.
+          else if (
+            device.get_device_type() ==
+              Clutter.InputDeviceType.POINTER_DEVICE ||
+            device.get_device_type() ==
+              Clutter.InputDeviceType.TOUCHPAD_DEVICE ||
+            device.get_device_type() ==
+              Clutter.InputDeviceType.TOUCHSCREEN_DEVICE
+          ) {
+            this._lastNonPointerDevice = null;
+          }
+        }
+      }
+    );
 
     // This is called further below in various cases. It is not only called on real button
     // release events but also on semantically similar events such as touch end events.
@@ -141,16 +159,39 @@ var Menu = class Menu {
     };
 
     // We connect to the generic "event" event and handle all kinds of events in there.
-    this._background.connect('event', (actor, event) => {
+    this._background.connect("event", (actor, event) => {
       // Store the latest input position.
-      if (event.type() == Clutter.EventType.MOTION ||
-          event.type() == Clutter.EventType.TOUCH_UPDATE ||
-          event.type() == Clutter.EventType.ENTER) {
+      if (
+        event.type() == Clutter.EventType.MOTION ||
+        event.type() == Clutter.EventType.TOUCH_UPDATE ||
+        event.type() == Clutter.EventType.ENTER
+      ) {
+        // We draw a rectangle and querry which monitor it is on to determine the active
+        // display. There's probably a saner method to do this.
+        let rect = new Meta.Rectangle({
+          x: event.get_coords()[0],
+          y: event.get_coords()[1],
+          width: 1,
+          height: 1,
+        });
+        this._activeMon = global.display.get_monitor_index_for_rect(rect);
+        // Tablet cursor position.
+        if (
+          this._lastNonPointerDevice &&
+          event.get_device().get_device_name() ===
+            this._lastNonPointerDevice.get_device_name()
+        ) {
+          this._tabletPos = event.get_coords();
+          utils.debug(this._tabletPos);
+        }
+        // Mouse cursor position.
         this._pointerPos = event.get_coords();
 
         // Cancel any pending long-press event if the pointer moved too much.
-        if (this._longPressTimeout >= 0 &&
-            !this._isInDragThreshold(this._pointerPos, this._clickStartPos)) {
+        if (
+          this._longPressTimeout >= 0 &&
+          !this._isInDragThreshold(this._pointerPos, this._clickStartPos)
+        ) {
           GLib.source_remove(this._longPressTimeout);
           this._longPressTimeout = -1;
         }
@@ -158,39 +199,42 @@ var Menu = class Menu {
 
       // If we have to open the menu at a secondary pointer (e.g. from a stylus), we use
       // this enter event to position the menu.
-      if (event.type() == Clutter.EventType.ENTER && this._lastNonPointerDevice &&
-          this._initialRepositioningRequired) {
-        if (event.get_device().get_device_name() ===
-            this._lastNonPointerDevice.get_device_name()) {
-          this._setPosition(this._pointerPos[0], this._pointerPos[1], false);
-          this._initialRepositioningRequired = false;
-        }
+      if (
+        event.type() == Clutter.EventType.ENTER &&
+        this._lastNonPointerDevice &&
+        this._initialRepositioningRequired
+      ) {
+        this._setPosition(this._tabletPos[0], this._tabletPos[1], false);
+        this._initialRepositioningRequired = false;
+        this._pointerPos = this._tabletPos;
       }
 
       // If a modifier key is released while an item is dragged around, this can lead to
       // a selection in "Turbo Mode".
       if (event.type() == Clutter.EventType.KEY_RELEASE) {
         if (this._draggedChild != null) {
-
           // This seems kind-of hard-coded... Is there a better way to test whether the
           // released key was a modifier key?
-          if (event.get_key_symbol() == Clutter.KEY_Control_L ||
-              event.get_key_symbol() == Clutter.KEY_Control_R ||
-              event.get_key_symbol() == Clutter.KEY_Shift_L ||
-              event.get_key_symbol() == Clutter.KEY_Shift_R ||
-              event.get_key_symbol() == Clutter.KEY_Alt_L ||
-              event.get_key_symbol() == Clutter.KEY_Alt_R ||
-              event.get_key_symbol() == Clutter.KEY_Super_L ||
-              event.get_key_symbol() == Clutter.KEY_Super_R) {
+          if (
+            event.get_key_symbol() == Clutter.KEY_Control_L ||
+            event.get_key_symbol() == Clutter.KEY_Control_R ||
+            event.get_key_symbol() == Clutter.KEY_Shift_L ||
+            event.get_key_symbol() == Clutter.KEY_Shift_R ||
+            event.get_key_symbol() == Clutter.KEY_Alt_L ||
+            event.get_key_symbol() == Clutter.KEY_Alt_R ||
+            event.get_key_symbol() == Clutter.KEY_Super_L ||
+            event.get_key_symbol() == Clutter.KEY_Super_R
+          ) {
             emitSelection(this._pointerPos);
           }
         }
         return Clutter.EVENT_STOP;
       }
 
-      if (event.type() == Clutter.EventType.BUTTON_PRESS ||
-          event.type() == Clutter.EventType.TOUCH_BEGIN) {
-
+      if (
+        event.type() == Clutter.EventType.BUTTON_PRESS ||
+        event.type() == Clutter.EventType.TOUCH_BEGIN
+      ) {
         // Store the position where the click started. If the pointer is not moved too,
         // much, this may become a long-press. This is also used for right-mouse-button
         // cancelling.
@@ -202,19 +246,24 @@ var Menu = class Menu {
         if (event.get_button() == 0 || event.get_button() == 1) {
           const delay = Clutter.Settings.get_default().long_press_duration;
 
-          this._longPressTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-            this.cancel();
-            this.close();
-            this._longPressTimeout = -1;
-          });
+          this._longPressTimeout = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT,
+            delay,
+            () => {
+              this.cancel();
+              this.close();
+              this._longPressTimeout = -1;
+            }
+          );
         }
       }
 
       // Forward button release events to the selection wedges.
       // Touch-end events are handled as if the left mouse button was released.
-      if (event.type() == Clutter.EventType.BUTTON_RELEASE ||
-          event.type() == Clutter.EventType.TOUCH_END) {
-
+      if (
+        event.type() == Clutter.EventType.BUTTON_RELEASE ||
+        event.type() == Clutter.EventType.TOUCH_END
+      ) {
         // Cancel any pending long-press.
         if (this._longPressTimeout >= 0) {
           GLib.source_remove(this._longPressTimeout);
@@ -223,8 +272,11 @@ var Menu = class Menu {
 
         // Cancel the menu on right-button presses, but only if the pointer did not move
         // too much.
-        if (event.get_button() == 3 && this._clickStartPos &&
-            this._isInDragThreshold(this._pointerPos, this._clickStartPos)) {
+        if (
+          event.get_button() == 3 &&
+          this._clickStartPos &&
+          this._isInDragThreshold(this._pointerPos, this._clickStartPos)
+        ) {
           this.cancel();
           this.close();
           return Clutter.EVENT_STOP;
@@ -234,7 +286,8 @@ var Menu = class Menu {
         // the main issue is that releasing the Super key after the Fly-Pie menus has been
         // closed would lead to toggling the overview.
         const turboModifiers =
-            Gtk.accelerator_get_default_mod_mask() | Clutter.ModifierType.MOD4_MASK;
+          Gtk.accelerator_get_default_mod_mask() |
+          Clutter.ModifierType.MOD4_MASK;
 
         if ((event.get_state() & turboModifiers) == 0) {
           emitSelection(event.get_coords());
@@ -244,7 +297,10 @@ var Menu = class Menu {
 
       // Hide the menu when the escape key is pressed.
       if (event.type() == Clutter.EventType.KEY_PRESS) {
-        if (event.get_key_symbol() == Clutter.KEY_Escape && this._menuID != null) {
+        if (
+          event.get_key_symbol() == Clutter.KEY_Escape &&
+          this._menuID != null
+        ) {
           this.cancel();
           this.close();
         }
@@ -253,9 +309,10 @@ var Menu = class Menu {
 
       // Forward motion events to the SelectionWedges. If the primary mouse button is
       // pressed, this will also drag the currently active child around.
-      if (event.type() == Clutter.EventType.MOTION ||
-          event.type() == Clutter.EventType.TOUCH_UPDATE) {
-
+      if (
+        event.type() == Clutter.EventType.MOTION ||
+        event.type() == Clutter.EventType.TOUCH_UPDATE
+      ) {
         // If a display-timeout is configured, the menu is only shown when the pointer is
         // stationary for some time. Here we restart the timeout if it is currently
         // pending.
@@ -265,13 +322,18 @@ var Menu = class Menu {
         }
 
         // Forward the motion event to the selection wedges.
-        this._selectionWedges.onMotionEvent(event.get_coords(), event.get_state());
+        this._selectionWedges.onMotionEvent(
+          event.get_coords(),
+          event.get_state()
+        );
 
         // If the primary button is pressed or a modifier is held down (for the
         // "Turbo-Mode"), but we do not have a dragged child yet, we mark the currently
         // hovered child as being the dragged child.
-        if ((this._selectionWedges.isGestureModifier(event.get_state())) &&
-            this._draggedChild == null) {
+        if (
+          this._selectionWedges.isGestureModifier(event.get_state()) &&
+          this._draggedChild == null
+        ) {
           const index = this._selectionWedges.getHoveredChild();
           if (index >= 0) {
             const child = this._menuPath[0].getChildMenuItems()[index];
@@ -282,7 +344,6 @@ var Menu = class Menu {
 
         // If there is a dragged child, update its position.
         if (this._draggedChild != null) {
-
           // This is for the statistics only: If this is the first gesture during the
           // current selection, we set this member to true. It will be set to false as
           // soon as the mouse button is released again.
@@ -292,9 +353,9 @@ var Menu = class Menu {
 
           // Transform event coordinates to parent-relative coordinates.
           let ok, x, y;
-          [x, y]       = event.get_coords();
+          [x, y] = event.get_coords();
           const parent = this._draggedChild.get_parent().get_parent();
-          [ok, x, y]   = parent.transform_stage_point(x, y);
+          [ok, x, y] = parent.transform_stage_point(x, y);
 
           // Set the child's position without any transition.
           this._draggedChild.set_easing_duration(0);
@@ -311,7 +372,7 @@ var Menu = class Menu {
     });
 
     // Delete the currently active menu once the background was faded-out.
-    this._background.connect('transitions-completed', () => {
+    this._background.connect("transitions-completed", () => {
       if (this._background.opacity == 0 && this._root) {
         this._root.destroy();
         this._root = null;
@@ -319,7 +380,7 @@ var Menu = class Menu {
     });
 
     // This is fired when the close button of the preview mode is clicked.
-    this._background.connect('close-event', () => {
+    this._background.connect("close-event", () => {
       this.cancel();
       this.close();
     });
@@ -338,7 +399,7 @@ var Menu = class Menu {
     this._background.add_child(this._selectionWedges);
 
     // This is fired when the mouse pointer enters one of the wedges.
-    this._selectionWedges.connect('child-hovered-event', (o, hoveredIndex) => {
+    this._selectionWedges.connect("child-hovered-event", (o, hoveredIndex) => {
       // If there is a currently hovered child, we will call the unhover signal later.
       const unhoveredIndex = this._menuPath[0].getActiveChildIndex();
 
@@ -375,7 +436,6 @@ var Menu = class Menu {
 
         // If the item has a selection callback, it is an action.
         if (child.getSelectionCallback() != null) {
-
           // If the action has a hover callback, call it!
           if (child.getHoverCallback() != null) {
             child.getHoverCallback()();
@@ -392,78 +452,98 @@ var Menu = class Menu {
 
     // This is fired when the primary mouse button is pressed inside a wedge. This will
     // also be emitted when a gesture is detected.
-    this._selectionWedges.connect('child-selected-event', (o, index, gesture, x, y) => {
-      const parent = this._menuPath[0];
-      const child  = this._menuPath[0].getChildMenuItems()[index];
+    this._selectionWedges.connect(
+      "child-selected-event",
+      (o, index, gesture, x, y) => {
+        const parent = this._menuPath[0];
+        const child = this._menuPath[0].getChildMenuItems()[index];
 
-      // Ignore any gesture-based selection of leaf nodes. Final selections are only done
-      // when the mouse button or a modifier button is released. An exception is the
-      // experimental hover mode in which we also allow selections by gestures.
-      const hoverMode = this._settings.get_boolean('hover-mode');
-      if (gesture && !hoverMode && child.getChildMenuItems().length == 0) {
-        return;
+        // Ignore any gesture-based selection of leaf nodes. Final selections are only done
+        // when the mouse button or a modifier button is released. An exception is the
+        // experimental hover mode in which we also allow selections by gestures.
+        const hoverMode = this._settings.get_boolean("hover-mode");
+        if (gesture && !hoverMode && child.getChildMenuItems().length == 0) {
+          return;
+        }
+
+        // Once something is selected, it's not dragged anymore. Even if the mouse button is
+        // still pressed (we might come here when a gesture was detected by the
+        // SelectionWedges), we abort any dragging operation.
+        this._draggedChild = null;
+
+        // Update the item states: The previously active item becomes the parent, the
+        // selected child becomes the new hovered center item.
+        parent.setState(MenuItemState.PARENT, index);
+        child.setState(MenuItemState.CENTER_HOVERED);
+
+        // Prepend the newly active item to our menu selection chain.
+        this._menuPath.unshift(child);
+
+        // The newly active item will be shown at the pointer position. To prevent it from
+        // going offscreen, we clamp the position to the current monitor bounds (we do it
+        // removing background boundaries from mouse pointer).
+        const [clampedX, clampedY] = this._clampToMonitor(
+          x - this._background.x,
+          y - this._background.y,
+          10
+        );
+
+        // Warp the mouse pointer to this position if necessary accounting background
+        // position as well.
+        if (x != clampedX || y != clampedY) {
+          this._input.warpPointer(
+            clampedX + this._background.x,
+            clampedY + this._background.y
+          );
+        }
+
+        // Move the child to the target position accounting background position as well.
+        const [ok, relativeX, relativeY] = parent.transform_stage_point(
+          clampedX,
+          clampedY
+        );
+        child.set_translation(
+          relativeX + this._background.x,
+          relativeY + this._background.y,
+          0
+        );
+
+        // The "trace" of the menu needs to be "idealized". That means, even if the user did
+        // not click exactly in the direction of the item, the line connecting parent and
+        // child has to be drawn with the correct angle. As the newly active item will be
+        // shown directly at the pointer position, we must move the parent so that the trace
+        // has the correct angle. Actually not the parent item has to move but the root of
+        // the entire menu selection chain.
+        this._idealizeTace(
+          clampedX + this._background.x,
+          clampedY + this._background.y
+        );
+
+        // Now we update position and the number of wedges of the SelectionWedges
+        // according to the newly active item.
+        const itemAngles = [];
+        child.getChildMenuItems().forEach((item) => {
+          itemAngles.push(item.angle);
+        });
+
+        this._selectionWedges.setItemAngles(
+          itemAngles,
+          (child.angle + 180) % 360
+        );
+        this._selectionWedges.set_translation(clampedX, clampedY, 0);
+
+        // This recursively redraws all children based on their newly assigned state.
+        this._root.redraw();
+
+        // Finally, if a child was selected which is activatable, we report a selection and
+        // hide the entire menu.
+        this._selectChild(child);
       }
-
-      // Once something is selected, it's not dragged anymore. Even if the mouse button is
-      // still pressed (we might come here when a gesture was detected by the
-      // SelectionWedges), we abort any dragging operation.
-      this._draggedChild = null;
-
-      // Update the item states: The previously active item becomes the parent, the
-      // selected child becomes the new hovered center item.
-      parent.setState(MenuItemState.PARENT, index);
-      child.setState(MenuItemState.CENTER_HOVERED);
-
-      // Prepend the newly active item to our menu selection chain.
-      this._menuPath.unshift(child);
-
-      // The newly active item will be shown at the pointer position. To prevent it from
-      // going offscreen, we clamp the position to the current monitor bounds (we do it
-      // removing background boundaries from mouse pointer).
-      const [clampedX, clampedY] =
-          this._clampToMonitor(x - this._background.x, y - this._background.y, 10);
-
-      // Warp the mouse pointer to this position if necessary accounting background
-      // position as well.
-      if (x != clampedX || y != clampedY) {
-        this._input.warpPointer(
-            clampedX + this._background.x, clampedY + this._background.y);
-      }
-
-      // Move the child to the target position accounting background position as well.
-      const [ok, relativeX, relativeY] = parent.transform_stage_point(clampedX, clampedY);
-      child.set_translation(
-          relativeX + this._background.x, relativeY + this._background.y, 0);
-
-      // The "trace" of the menu needs to be "idealized". That means, even if the user did
-      // not click exactly in the direction of the item, the line connecting parent and
-      // child has to be drawn with the correct angle. As the newly active item will be
-      // shown directly at the pointer position, we must move the parent so that the trace
-      // has the correct angle. Actually not the parent item has to move but the root of
-      // the entire menu selection chain.
-      this._idealizeTace(clampedX + this._background.x, clampedY + this._background.y);
-
-      // Now we update position and the number of wedges of the SelectionWedges
-      // according to the newly active item.
-      const itemAngles = [];
-      child.getChildMenuItems().forEach(item => {
-        itemAngles.push(item.angle);
-      });
-
-      this._selectionWedges.setItemAngles(itemAngles, (child.angle + 180) % 360);
-      this._selectionWedges.set_translation(clampedX, clampedY, 0);
-
-      // This recursively redraws all children based on their newly assigned state.
-      this._root.redraw();
-
-      // Finally, if a child was selected which is activatable, we report a selection and
-      // hide the entire menu.
-      this._selectChild(child);
-    });
+    );
 
     // When a parent item is hovered, we draw the currently active item with the state
     // CENTER_HOVERED to indicate that the parent is not a child.
-    this._selectionWedges.connect('parent-hovered-event', () => {
+    this._selectionWedges.connect("parent-hovered-event", () => {
       // If there is a currently hovered child, we may have to call the unhover signal.
       const unhoveredIndex = this._menuPath[0].getActiveChildIndex();
       this._unhoverChild(unhoveredIndex);
@@ -482,61 +562,75 @@ var Menu = class Menu {
 
     // If the parent of the currently active item is selected, it becomes the newly active
     // item with the state CENTER_HOVERED.
-    this._selectionWedges.connect('parent-selected-event', (o, gesture, x, y) => {
-      const parent = this._menuPath[1];
-      parent.setState(MenuItemState.CENTER_HOVERED, -1);
+    this._selectionWedges.connect(
+      "parent-selected-event",
+      (o, gesture, x, y) => {
+        const parent = this._menuPath[1];
+        parent.setState(MenuItemState.CENTER_HOVERED, -1);
 
-      // Remove the first element of the menu selection chain.
-      this._menuPath.shift();
+        // Remove the first element of the menu selection chain.
+        this._menuPath.shift();
 
-      // The parent item will be moved to the pointer position. To prevent it from
-      // going offscreen, we clamp the position to the current monitor bounds (we do it
-      // removing background boundaries from mouse pointer).
-      const [clampedX, clampedY] =
-          this._clampToMonitor(x - this._background.x, y - this._background.y, 10);
+        // The parent item will be moved to the pointer position. To prevent it from
+        // going offscreen, we clamp the position to the current monitor bounds (we do it
+        // removing background boundaries from mouse pointer).
+        const [clampedX, clampedY] = this._clampToMonitor(
+          x - this._background.x,
+          y - this._background.y,
+          10
+        );
 
-      // Warp the mouse pointer to this position if necessary accounting background
-      // position as well.
-      if (x != clampedX || y != clampedY) {
-        this._input.warpPointer(
-            clampedX + this._background.x, clampedY + this._background.y);
+        // Warp the mouse pointer to this position if necessary accounting background
+        // position as well.
+        if (x != clampedX || y != clampedY) {
+          this._input.warpPointer(
+            clampedX + this._background.x,
+            clampedY + this._background.y
+          );
+        }
+
+        // The "trace" of the menu needs to be "idealized". That means, even if the user did
+        // not click exactly in the direction of the item, the line connecting parent and
+        // child has to be drawn with the correct angle. As the newly active item will be
+        // shown directly at the pointer position, we must move the parent so that the trace
+        // has the correct angle. Actually not the parent item has to move but the root of
+        // the entire menu selection chain.
+        this._idealizeTace(
+          clampedX + this._background.x,
+          clampedY + this._background.y
+        );
+
+        // Now we update position and the number of wedges of the SelectionWedges
+        // according to the newly active item.
+        const itemAngles = [];
+        parent.getChildMenuItems().forEach((item) => {
+          itemAngles.push(item.angle);
+        });
+
+        // If necessary, add a wedge for the parent's parent.
+        if (this._menuPath.length > 1) {
+          this._selectionWedges.setItemAngles(
+            itemAngles,
+            (parent.angle + 180) % 360
+          );
+        } else {
+          this._selectionWedges.setItemAngles(itemAngles);
+        }
+
+        this._selectionWedges.set_translation(clampedX, clampedY, 0);
+
+        // Once the parent is selected, nothing is dragged anymore. Even if the mouse button
+        // is still pressed (we might come here when a gesture was detected by the
+        // SelectionWedges), we abort any dragging operation.
+        this._draggedChild = null;
+
+        // This recursively redraws all children based on their newly assigned state.
+        this._root.redraw();
       }
-
-      // The "trace" of the menu needs to be "idealized". That means, even if the user did
-      // not click exactly in the direction of the item, the line connecting parent and
-      // child has to be drawn with the correct angle. As the newly active item will be
-      // shown directly at the pointer position, we must move the parent so that the trace
-      // has the correct angle. Actually not the parent item has to move but the root of
-      // the entire menu selection chain.
-      this._idealizeTace(clampedX + this._background.x, clampedY + this._background.y);
-
-      // Now we update position and the number of wedges of the SelectionWedges
-      // according to the newly active item.
-      const itemAngles = [];
-      parent.getChildMenuItems().forEach(item => {
-        itemAngles.push(item.angle);
-      });
-
-      // If necessary, add a wedge for the parent's parent.
-      if (this._menuPath.length > 1) {
-        this._selectionWedges.setItemAngles(itemAngles, (parent.angle + 180) % 360);
-      } else {
-        this._selectionWedges.setItemAngles(itemAngles);
-      }
-
-      this._selectionWedges.set_translation(clampedX, clampedY, 0);
-
-      // Once the parent is selected, nothing is dragged anymore. Even if the mouse button
-      // is still pressed (we might come here when a gesture was detected by the
-      // SelectionWedges), we abort any dragging operation.
-      this._draggedChild = null;
-
-      // This recursively redraws all children based on their newly assigned state.
-      this._root.redraw();
-    });
+    );
 
     // This is usually fired when the right mouse button is pressed.
-    this._selectionWedges.connect('cancel-selection-event', () => {
+    this._selectionWedges.connect("cancel-selection-event", () => {
       this.cancel();
       this.close();
     });
@@ -566,7 +660,6 @@ var Menu = class Menu {
   // positions x and y are given, the menu will be shown at this position. Returns an
   // error code if something went wrong. See DBusInerface.js for all possible error codes.
   open(menuID, structure, previewMode, x, y) {
-
     // The menu is already active. Try to update the existing menu according to the new
     // structure and if that is successful, emit an onCancel signal for the current menu.
     if (this._menuID != null) {
@@ -623,12 +716,10 @@ var Menu = class Menu {
 
       if (item.children) {
         // Recursively continue for all children.
-        item.children.forEach(child => {
+        item.children.forEach((child) => {
           menuItem.addMenuItem(createMenuItem(child));
         });
-
       } else {
-
         // If there are no children, there may be a selection, a hover, or an unhover
         // callback. We forward them to the item so that they can be called if required.
         if (item.onSelect) {
@@ -658,7 +749,7 @@ var Menu = class Menu {
 
     // Initialize the wedge angles of the SelectionWedges according to the root menu.
     const itemAngles = [];
-    this._root.getChildMenuItems().forEach(item => {
+    this._root.getChildMenuItems().forEach((item) => {
       itemAngles.push(item.angle);
     });
     this._selectionWedges.setItemAngles(itemAngles);
@@ -677,10 +768,12 @@ var Menu = class Menu {
       this._selectionWedges.set_translation(posX, posY, 0);
 
       if (!previewMode) {
-        this._input.warpPointer(posX + this._background.x, posY + this._background.y);
+        this._input.warpPointer(
+          posX + this._background.x,
+          posY + this._background.y
+        );
       }
     } else {
-
       // Use mouse pointer location if no coordinates are given. In many cases, this will
       // be correct, however, the user may be using touch input, a tablet or something
       // completely different. Therefore we set _initialRepositioningRequired to true and
@@ -713,14 +806,13 @@ var Menu = class Menu {
   // DBusInterface.errorCodes.eInvalidPath will be returned. If currently no menu is
   // shown, DBusInterface.errorCodes.eNoActiveMenu will be returned.
   selectItem(path) {
-
     // Check whether a menu is currently visible.
     if (this._menuID == null) {
       return DBusInterface.errorCodes.eNoActiveMenu;
     }
 
     // The path should start with a '/'.
-    if (path.length == 0 || path[0] != '/') {
+    if (path.length == 0 || path[0] != "/") {
       return DBusInterface.errorCodes.eInvalidPath;
     }
 
@@ -728,14 +820,14 @@ var Menu = class Menu {
     path = path.substring(1);
 
     // Remove trailing slash (if any).
-    if (path[path.length - 1] == '/') {
+    if (path[path.length - 1] == "/") {
       path = path.substring(0, path.length - 1);
     }
 
     // Split at "/" and convert to numbers.
     let items = [];
     if (path.length > 0) {
-      items = path.split('/').map((x) => parseInt(x));
+      items = path.split("/").map((x) => parseInt(x));
     }
 
     // Let's try to construct the menu path accordingly.
@@ -779,7 +871,6 @@ var Menu = class Menu {
 
   // Hides the menu and the background actor.
   close() {
-
     // The menu is not active; nothing to be done.
     if (this._menuID == null) {
       return;
@@ -805,7 +896,7 @@ var Menu = class Menu {
 
     // Reset some other members.
     this._draggedChild = null;
-    this._menuPath     = [];
+    this._menuPath = [];
   }
 
   // Emits the DBus-Cancel signal and potentially an unhover signal for the currently
@@ -839,7 +930,6 @@ var Menu = class Menu {
   // we don't know, so this guess will not be correct in all cases.
   // It will return 0 on success and an error code < 0 on failure.
   update(structure) {
-
     // First make sure that all properties of the given menu structure are set correctly.
     const result = this._normalizeMenuStructure(structure);
     if (result < 0) {
@@ -850,9 +940,9 @@ var Menu = class Menu {
     // parameter is the corresponding MenuItem of the currently open menu. If no
     // corresponding item exists, this will be a newly created MenuItem.
     const updateMenuItem = (newConfig, item) => {
-      item.id    = newConfig.id;
-      item.name  = newConfig.name;
-      item.icon  = newConfig.icon;
+      item.id = newConfig.id;
+      item.name = newConfig.name;
+      item.icon = newConfig.icon;
       item.angle = newConfig.angle;
       item.setSelectionCallback(newConfig.onSelect || null);
       item.setHoverCallback(newConfig.onHover || null);
@@ -861,10 +951,9 @@ var Menu = class Menu {
       const children = new Set(item.getChildMenuItems());
 
       if (newConfig.children) {
-
         // First, we iterate through all new children an try to find for each an old child
         // with the same name and icon. If one exists, this is used for the new child.
-        newConfig.children.forEach(newChild => {
+        newConfig.children.forEach((newChild) => {
           for (let child of children) {
             if (child.name == newChild.name && child.icon == newChild.icon) {
               newChild.matchingChild = child;
@@ -877,7 +966,7 @@ var Menu = class Menu {
         // Then, for each new child which does not have a corresponding old child
         // assigned, we try to find one for which at least the name or the icon is the
         // same.
-        newConfig.children.forEach(newChild => {
+        newConfig.children.forEach((newChild) => {
           if (newChild.matchingChild == undefined) {
             for (let child of children) {
               if (child.name == newChild.name || child.icon == newChild.icon) {
@@ -891,7 +980,7 @@ var Menu = class Menu {
 
         // And new MenuItems are created for those new children which do not have a
         // corresponding old MenuItem. For all others, all settings are updated.
-        newConfig.children.forEach(newChild => {
+        newConfig.children.forEach((newChild) => {
           if (newChild.matchingChild == undefined) {
             newChild.matchingChild = new MenuItem({
               id: newChild.id,
@@ -899,20 +988,27 @@ var Menu = class Menu {
               icon: newChild.icon,
               angle: newChild.angle,
             });
-            newChild.matchingChild.setSelectionCallback(newConfig.onSelect || null);
+            newChild.matchingChild.setSelectionCallback(
+              newConfig.onSelect || null
+            );
             newChild.matchingChild.setHoverCallback(newConfig.onHover || null);
-            newChild.matchingChild.setUnhoverCallback(newConfig.onUnhover || null);
+            newChild.matchingChild.setUnhoverCallback(
+              newConfig.onUnhover || null
+            );
             item.addMenuItem(newChild.matchingChild);
             newChild.matchingChild.onSettingsChange(this._settings);
-
           } else {
-            newChild.matchingChild.id    = newChild.id;
-            newChild.matchingChild.name  = newChild.name;
-            newChild.matchingChild.icon  = newChild.icon;
+            newChild.matchingChild.id = newChild.id;
+            newChild.matchingChild.name = newChild.name;
+            newChild.matchingChild.icon = newChild.icon;
             newChild.matchingChild.angle = newChild.angle;
-            newChild.matchingChild.setSelectionCallback(newConfig.onSelect || null);
+            newChild.matchingChild.setSelectionCallback(
+              newConfig.onSelect || null
+            );
             newChild.matchingChild.setHoverCallback(newConfig.onHover || null);
-            newChild.matchingChild.setUnhoverCallback(newConfig.onUnhover || null);
+            newChild.matchingChild.setUnhoverCallback(
+              newConfig.onUnhover || null
+            );
           }
         });
 
@@ -937,7 +1033,10 @@ var Menu = class Menu {
       // Continue recursively
       if (newConfig.children) {
         for (let i = 0; i < newConfig.children.length; i++) {
-          updateMenuItem(newConfig.children[i], newConfig.children[i].matchingChild);
+          updateMenuItem(
+            newConfig.children[i],
+            newConfig.children[i].matchingChild
+          );
         }
       }
     };
@@ -953,13 +1052,11 @@ var Menu = class Menu {
     return 0;
   }
 
-
   // This is called every time a settings key changes. This is simply forwarded to all
   // items which need redrawing. This could definitely be optimized.
   onSettingsChange() {
-
     // Cache the display delay value.
-    this._displayTimeout = this._settings.get_double('display-timeout');
+    this._displayTimeout = this._settings.get_double("display-timeout");
 
     // Notify the selection wedges on the change.
     this._selectionWedges.onSettingsChange(this._settings);
@@ -986,50 +1083,59 @@ var Menu = class Menu {
     if (this._displayTimeout == 0) {
       this._reveal();
     } else {
-      this._displayTimeoutID =
-          GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._displayTimeout, () => {
-            this._reveal();
-            this._displayTimeoutID = -1;
-          });
+      this._displayTimeoutID = GLib.timeout_add(
+        GLib.PRIORITY_DEFAULT,
+        this._displayTimeout,
+        () => {
+          this._reveal();
+          this._displayTimeoutID = -1;
+        }
+      );
     }
   }
 
   // This is called whenever a menu is opened to position it on the screen. It will not
   // only move the root actor but also the selection wedges.
   _setPosition(x, y, doPointerWarp) {
-    const [clampedX, clampedY] =
-        this._clampToMonitor(x - this._background.x, y - this._background.y, 10);
+    const [clampedX, clampedY] = this._clampToMonitor(
+      x - this._background.x,
+      y - this._background.y,
+      10
+    );
     this._root.set_translation(clampedX, clampedY, 0);
     this._selectionWedges.set_translation(clampedX, clampedY, 0);
 
     // Warp the mouse pointer if required.
     if (doPointerWarp && (x != clampedX || y != clampedY)) {
       this._input.warpPointer(
-          clampedX + this._background.x, clampedY + this._background.y);
+        clampedX + this._background.x,
+        clampedY + this._background.y
+      );
     }
 
     // Report an initial motion event at the menu's center. This ensures that gestures
     // are detected properly even if the initial pointer movement is really fast.
     const mods = global.get_pointer()[2];
     this._selectionWedges.onMotionEvent(
-        [clampedX + this._background.x, clampedY + this._background.y], mods);
+      [clampedX + this._background.x, clampedY + this._background.y],
+      mods
+    );
   }
 
   // This assigns IDs and angles to each and every item. It also ensures that the root
   // item has a name and an icon set.
   _normalizeMenuStructure(structure) {
-
     // Make sure that a name and an icon is set.
     if (structure.name == undefined) {
-      structure.name = 'root';
+      structure.name = "root";
     }
 
     if (structure.icon == undefined) {
-      structure.icon = 'image-missing';
+      structure.icon = "image-missing";
     }
 
     structure.angle = 0;
-    structure.id    = '/';
+    structure.id = "/";
 
     // Calculate and verify all item angles and assign an ID to each item.
     if (structure.children) {
@@ -1037,7 +1143,7 @@ var Menu = class Menu {
         return DBusInterface.errorCodes.eInvalidAngles;
       }
 
-      this._updateItemIDs(structure.children, '');
+      this._updateItemIDs(structure.children, "");
     }
 
     return 0;
@@ -1050,7 +1156,7 @@ var Menu = class Menu {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (!item.id) {
-        item.id = parentID + '/' + i;
+        item.id = parentID + "/" + i;
       }
 
       // Proceed recursively with the children.
@@ -1067,7 +1173,6 @@ var Menu = class Menu {
   // items are always in degrees, 0° is on the top, 90° on the right, 180° on the bottom
   // and so on. This method returns true on success, false otherwise.
   _updateItemAngles(items, parentAngle) {
-
     // First use the utils method to compute all item angles.
     const itemAngles = utils.computeItemAngles(items, parentAngle);
 
@@ -1082,7 +1187,7 @@ var Menu = class Menu {
     });
 
     // Now that all angles are set, update the child items.
-    items.forEach(item => {
+    items.forEach((item) => {
       if (item.children) {
         if (!this._updateItemAngles(item.children, (item.angle + 180) % 360)) {
           return false;
@@ -1101,7 +1206,7 @@ var Menu = class Menu {
     this._menuPath[0].setState(MenuItemState.CENTER_HOVERED, -1);
     for (let i = 1; i < this._menuPath.length; i++) {
       let activeChildIndex = 0;
-      const siblings       = this._menuPath[i].getChildMenuItems();
+      const siblings = this._menuPath[i].getChildMenuItems();
       for (let j = 0; j < siblings.length; j++) {
         if (this._menuPath[i - 1] == siblings[j]) {
           activeChildIndex = j;
@@ -1120,19 +1225,24 @@ var Menu = class Menu {
 
     // Set the wedge angles of the SelectionWedges according to the new item structure.
     const itemAngles = [];
-    this._menuPath[0].getChildMenuItems().forEach(item => {
+    this._menuPath[0].getChildMenuItems().forEach((item) => {
       itemAngles.push(item.angle);
     });
 
     if (this._menuPath.length > 1) {
       this._selectionWedges.setItemAngles(
-          itemAngles, (this._menuPath[0].angle + 180) % 360);
+        itemAngles,
+        (this._menuPath[0].angle + 180) % 360
+      );
     } else {
       this._selectionWedges.setItemAngles(itemAngles);
     }
 
     this._selectionWedges.set_translation(
-        tipX - this._background.x, tipY - this._background.y, 0);
+      tipX - this._background.x,
+      tipY - this._background.y,
+      0
+    );
   }
 
   // x and y are the center coordinates of a MenuItem. This method returns a new position
@@ -1141,35 +1251,38 @@ var Menu = class Menu {
   // calculating the theoretically largest extends based on the current appearance
   // settings.
   _clampToMonitor(x, y, margin) {
-
-    const wedgeRadius  = this._settings.get_double('wedge-inner-radius');
+    const wedgeRadius = this._settings.get_double("wedge-inner-radius");
     const centerRadius = Math.max(
-        this._settings.get_double('center-size') / 2,
-        this._settings.get_double('center-size-hover') / 2);
+      this._settings.get_double("center-size") / 2,
+      this._settings.get_double("center-size-hover") / 2
+    );
     const childRadius = Math.max(
-        this._settings.get_double('child-size') / 2 +
-            this._settings.get_double('child-offset'),
-        this._settings.get_double('child-size-hover') / 2 +
-            this._settings.get_double('child-offset-hover'));
+      this._settings.get_double("child-size") / 2 +
+        this._settings.get_double("child-offset"),
+      this._settings.get_double("child-size-hover") / 2 +
+        this._settings.get_double("child-offset-hover")
+    );
     const grandchildRadius = Math.max(
-        this._settings.get_double('child-offset') +
-            this._settings.get_double('grandchild-size') / 2 +
-            this._settings.get_double('grandchild-offset'),
-        this._settings.get_double('child-offset-hover') +
-            this._settings.get_double('grandchild-size-hover') / 2 +
-            this._settings.get_double('grandchild-offset-hover'));
+      this._settings.get_double("child-offset") +
+        this._settings.get_double("grandchild-size") / 2 +
+        this._settings.get_double("grandchild-offset"),
+      this._settings.get_double("child-offset-hover") +
+        this._settings.get_double("grandchild-size-hover") / 2 +
+        this._settings.get_double("grandchild-offset-hover")
+    );
 
     // Calculate theoretically largest extent.
     let maxSize = wedgeRadius;
-    maxSize     = Math.max(maxSize, centerRadius);
-    maxSize     = Math.max(maxSize, childRadius);
-    maxSize     = Math.max(maxSize, grandchildRadius);
-    maxSize *= 2 * this._settings.get_double('global-scale') * utils.getHDPIScale();
+    maxSize = Math.max(maxSize, centerRadius);
+    maxSize = Math.max(maxSize, childRadius);
+    maxSize = Math.max(maxSize, grandchildRadius);
+    maxSize *=
+      2 * this._settings.get_double("global-scale") * utils.getHDPIScale();
 
     // Clamp to monitor bounds.
     const monitor = Main.layoutManager.currentMonitor;
 
-    const min  = margin + maxSize / 2;
+    const min = margin + maxSize / 2;
     const maxX = monitor.width - min;
     const maxY = monitor.height - min;
 
@@ -1198,7 +1311,6 @@ var Menu = class Menu {
   // The root item will be moved so that the currently active item is moved to the
   // absolute position given by tipX and tipY.
   _idealizeTace(tipX, tipY) {
-
     // This will contain the vector from the menu selection chain's root element to it's
     // tip (the currently selected item). This will be used to move the root element so
     // that the tip of the chain is at the tip position.
@@ -1215,8 +1327,8 @@ var Menu = class Menu {
       let y = item.translation_y;
 
       // There might be a transition in progress, so we rather grab their final values.
-      const tx = item.get_transition('translation-x');
-      const ty = item.get_transition('translation-y');
+      const tx = item.get_transition("translation-x");
+      const ty = item.get_transition("translation-y");
       if (tx) x = tx.interval.final;
       if (ty) y = ty.interval.final;
 
@@ -1226,19 +1338,23 @@ var Menu = class Menu {
 
       // There is a setting for a minimum trace length.
       const idealTraceLength = Math.max(
-          this._settings.get_double('trace-min-length') *
-              this._settings.get_double('global-scale') * utils.getHDPIScale(),
-          currentTraceLength);
+        this._settings.get_double("trace-min-length") *
+          this._settings.get_double("global-scale") *
+          utils.getHDPIScale(),
+        currentTraceLength
+      );
 
       // Based on this trace length, we can compute where the item should be placed
       // relative to its parent.
-      const itemAngle = item.angle * Math.PI / 180;
-      const idealX    = Math.floor(Math.sin(itemAngle) * idealTraceLength);
-      const idealY    = -Math.floor(Math.cos(itemAngle) * idealTraceLength);
+      const itemAngle = (item.angle * Math.PI) / 180;
+      const idealX = Math.floor(Math.sin(itemAngle) * idealTraceLength);
+      const idealY = -Math.floor(Math.cos(itemAngle) * idealTraceLength);
 
       // Place the item at its idealized position.
-      item.set_easing_duration(this._settings.get_double('easing-duration') * 1000);
-      item.set_easing_mode(this._settings.get_enum('easing-mode'));
+      item.set_easing_duration(
+        this._settings.get_double("easing-duration") * 1000
+      );
+      item.set_easing_mode(this._settings.get_enum("easing-mode"));
       item.set_translation(idealX, idealY, 0);
 
       // Accumulate the full trace.
@@ -1247,8 +1363,11 @@ var Menu = class Menu {
     }
 
     // Transform the desired tip coordinates to root-item space.
-    const root                             = this._menuPath[this._menuPath.length - 1];
-    const [ok, relativeTipX, relativeTipY] = root.transform_stage_point(tipX, tipY);
+    const root = this._menuPath[this._menuPath.length - 1];
+    const [ok, relativeTipX, relativeTipY] = root.transform_stage_point(
+      tipX,
+      tipY
+    );
 
     // The root element needs to move by the distance between the accumulated ideal
     // position and the desired tip position.
@@ -1258,7 +1377,10 @@ var Menu = class Menu {
     // Finally move the root item so that the tip of the selection chain is beneath the
     // mouse pointer.
     root.set_translation(
-        root.translation_x + requiredOffsetX, root.translation_y + requiredOffsetY, 0);
+      root.translation_x + requiredOffsetX,
+      root.translation_y + requiredOffsetY,
+      0
+    );
   }
 
   // Reports an unhover event on the D-Bus for the child of the currently selected menu.
@@ -1268,7 +1390,6 @@ var Menu = class Menu {
 
       // If the item has a selection callback, it is an action.
       if (child.getSelectionCallback() != null) {
-
         // If the action has a unhover callback, call it!
         if (child.getUnhoverCallback() != null) {
           child.getUnhoverCallback()();
@@ -1283,12 +1404,12 @@ var Menu = class Menu {
   // Activates the given menu item by emitting all required signals and hides the menu.
   _selectChild(child) {
     if (child.getSelectionCallback() != null) {
-
       // This is required for the statistics.
-      const selectionTime  = this._timer.getElapsed();
+      const selectionTime = this._timer.getElapsed();
       const selectionDepth = this._menuPath.length - 1;
       this._background.set_easing_delay(
-          this._settings.get_double('easing-duration') * 1000);
+        this._settings.get_double("easing-duration") * 1000
+      );
 
       // close() will reset our menu ID. However, we need to pass it to the onSelect
       // callback so we create a copy here. close() has to be called before
@@ -1318,7 +1439,10 @@ var Menu = class Menu {
       // Finally, record this selection in the statistics. Parameters are selection depth,
       // time and whether a continuous gesture was used for the selection.
       Statistics.getInstance().addSelection(
-          selectionDepth, selectionTime, this._gestureOnlySelection);
+        selectionDepth,
+        selectionTime,
+        this._gestureOnlySelection
+      );
     }
   }
 
@@ -1326,7 +1450,6 @@ var Menu = class Menu {
   // seconds to the current location of the mouse pointer. This is always called when an
   // action is executed as many of them will potentially open windows.
   _openNextWindowAtPointer() {
-
     // First cancel any ongoing window-movement timeouts.
     this._cancelMoveWindowToPointer();
 
@@ -1335,27 +1458,36 @@ var Menu = class Menu {
     const [pointerX, pointerY] = global.get_pointer();
 
     // Wait until the next window is created.
-    this._windowCreatedID = global.display.connect('window-created', () => {
-      this._windowfocusedID = global.display.connect('notify::focus-window', () => {
-        const frame = global.display.focus_window.get_frame_rect();
-        const area  = global.display.focus_window.get_work_area_current_monitor();
+    this._windowCreatedID = global.display.connect("window-created", () => {
+      this._windowfocusedID = global.display.connect(
+        "notify::focus-window",
+        () => {
+          const frame = global.display.focus_window.get_frame_rect();
+          const area =
+            global.display.focus_window.get_work_area_current_monitor();
 
-        // Center on the pointer.
-        frame.x = pointerX - frame.width / 2;
-        frame.y = pointerY - frame.height / 2;
+          // Center on the pointer.
+          frame.x = pointerX - frame.width / 2;
+          frame.y = pointerY - frame.height / 2;
 
-        // Clamp to the work area.
-        frame.x = Math.min(Math.max(frame.x, area.x), area.x + area.width - frame.width);
-        frame.y =
-            Math.min(Math.max(frame.y, area.y), area.y + area.height - frame.height);
+          // Clamp to the work area.
+          frame.x = Math.min(
+            Math.max(frame.x, area.x),
+            area.x + area.width - frame.width
+          );
+          frame.y = Math.min(
+            Math.max(frame.y, area.y),
+            area.y + area.height - frame.height
+          );
 
-        // Move the window!
-        global.display.focus_window.move_frame(true, frame.x, frame.y);
+          // Move the window!
+          global.display.focus_window.move_frame(true, frame.x, frame.y);
 
-        // Disconnect, we will only move the window once.
-        global.display.disconnect(this._windowfocusedID);
-        this._windowfocusedID = null;
-      });
+          // Disconnect, we will only move the window once.
+          global.display.disconnect(this._windowfocusedID);
+          this._windowfocusedID = null;
+        }
+      );
 
       // Disconnect, we will only move the first window created within the timeout period.
       global.display.disconnect(this._windowCreatedID);
@@ -1363,11 +1495,15 @@ var Menu = class Menu {
     });
 
     // Disconnect the handlers after two seconds (if they were not called).
-    this._cancelMoveWindowID = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
-      this._cancelMoveWindowID = null;
-      this._cancelMoveWindowToPointer();
-      return false;
-    });
+    this._cancelMoveWindowID = GLib.timeout_add(
+      GLib.PRIORITY_DEFAULT,
+      2000,
+      () => {
+        this._cancelMoveWindowID = null;
+        this._cancelMoveWindowToPointer();
+        return false;
+      }
+    );
   }
 
   // This cancels any pending move-window-pointer operation started with the method above.
